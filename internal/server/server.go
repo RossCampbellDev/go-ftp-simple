@@ -62,7 +62,7 @@ func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
 		var response string // TODO: change to use the binary write?  refactor.
 
 		switch strings.ToUpper(command) {
-		case "QUIT", "EXIT":
+		case "EXIT", "QUIT":
 			defer f.exitClient(id)
 			response = "goodbye"
 			sentinel = true
