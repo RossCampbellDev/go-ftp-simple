@@ -2,9 +2,7 @@ package server
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"math/rand"
 	"net"
 	"strings"
@@ -41,47 +39,91 @@ func (f *FtpServer) Listen(port int) {
 
 		id := f.newClient(conn)
 		go f.parseCommand(conn, &wg, id)
-		wg.Wait()
 	}
+	wg.Wait()
 }
 
 func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
 	defer wg.Done()
-	userInput := make([]byte, 512) // TODO: not likely to break but still bad solution.  refactor.
-	_, err := conn.Read(userInput) // blocks the program but we need waitgroups if more than one connection
-	if err != nil {
-		panic(err) // replace with channel?
+	sentinel := false
+
+	for !sentinel {
+		userInput := make([]byte, 512) // TODO: not likely to break but still bad solution.  refactor.
+		_, err := conn.Read(userInput) // blocks the program but we need waitgroups if more than one connection
+		if err != nil {
+			panic(err) // replace with channel?
+		}
+
+		// TODO: bad bodge.  refactor.
+		endOfWord := bytes.IndexByte(userInput, 0)
+
+		command := string(userInput[:endOfWord])
+
+		var response string // TODO: change to use the binary write?  refactor.
+
+		switch strings.ToUpper(command) {
+		case "QUIT", "EXIT":
+			defer f.exitClient(id)
+			response = "goodbye"
+			sentinel = true
+		case "DEL":
+			response = f.deleteFile("fname") // TODO: get filename from client
+		case "GET":
+			response = f.sendFileToClient("test") // TODO: get filename
+		case "LS":
+			response = f.listFiles()
+		case "PUT":
+			response = f.retrieveFileFromClient("test")
+		default:
+			fmt.Println("Invalid Command Received")
+			response = "invalid command"
+		}
+
+		f.sendResponse(response, id) // bodge? lets the client know something happened
 	}
-
-	// TODO: bad bodge.  refactor.
-	endOfWord := bytes.IndexByte(userInput, 0)
-
-	command := string(userInput[:endOfWord])
-
-	fmt.Printf("command was: %s\n", command)
-	switch strings.ToUpper(command) {
-	case "QUIT", "EXIT":
-		f.exitClient(id)
-	case "DEL":
-		f.deleteFile("test")
-	case "GET":
-		f.sendFileToClient("test")
-	case "LS":
-		f.listFiles()
-	case "PUT":
-		f.retrieveFileFromClient("test")
-	default:
-		fmt.Println("Invalid Command")
-	}
-
-	f.sendResponse([]byte{0}, id) // bodge?
 }
 
-func (f *FtpServer) sendResponse(b []byte, id int) {
-	f.clients[id].Write(b)
+// maybe don't need this but whatever
+func (f *FtpServer) sendResponse(response string, id int) {
+	f.clients[id].Write([]byte(response))
 }
 
-func (f *FtpServer) readFile(conn net.Conn) {
+func (f *FtpServer) newClient(conn net.Conn) int {
+	// TODO: could result in over-writing connecting.  refactor.
+	id := rand.Intn(10000)
+	f.clients[id] = conn
+	fmt.Printf("...connection accepted from %s\n", f.clients[id].RemoteAddr().String())
+	return id
+}
+
+func (f *FtpServer) exitClient(id int) {
+	fmt.Printf("client disconnected: %s\n", f.clients[id].RemoteAddr().String())
+	f.clients[id].Close()
+	delete(f.clients, id)
+}
+
+func (f *FtpServer) deleteFile(filename string) string {
+	fmt.Println("delete", filename)
+	return "deleted"
+}
+
+func (f *FtpServer) sendFileToClient(filename string) string {
+	fmt.Println("get", filename)
+	return "file sent"
+}
+
+func (f *FtpServer) listFiles() string {
+	fmt.Println("list")
+	return "a list of files ere mate"
+}
+
+func (f *FtpServer) retrieveFileFromClient(filename string) string {
+	fmt.Println("put", filename)
+	return "file received"
+}
+
+/* OLD, refactor
+func (f *FtpServer) readFile(fileName string) {
 	readBuffer := new(bytes.Buffer)
 	for {
 		var size int64
@@ -94,34 +136,4 @@ func (f *FtpServer) readFile(conn net.Conn) {
 
 		fmt.Println("File Received")
 	}
-}
-
-func (f *FtpServer) newClient(conn net.Conn) int {
-	// TODO: could result in over-writing connecting.  refactor.
-	id := rand.Intn(10000)
-	f.clients[id] = conn
-	fmt.Printf("...connection accepted from %s\n", f.clients[id].RemoteAddr().String())
-	return id
-}
-
-func (f *FtpServer) exitClient(id int) {
-	f.clients[id].Close()
-	delete(f.clients, id)
-	fmt.Println("exiting server...")
-}
-
-func (f *FtpServer) deleteFile(filename string) {
-	fmt.Println("delete", filename)
-}
-
-func (f *FtpServer) sendFileToClient(filename string) {
-	fmt.Println("get", filename)
-}
-
-func (f *FtpServer) listFiles() {
-	fmt.Println("list")
-}
-
-func (f *FtpServer) retrieveFileFromClient(filename string) {
-	fmt.Println("put", filename)
-}
+} */

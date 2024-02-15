@@ -31,7 +31,7 @@ func main() {
 		go myConn.sendCommand(cmd, &wg)
 		wg.Wait()
 
-		response := make([]byte, 1) // TODO: needs replacing for CopyN etc.  refactor.
+		response := make([]byte, 512) // TODO: needs replacing for CopyN etc.  refactor.
 		if _, err := myConn.Read(response); err != nil {
 			if err == io.EOF {
 				fmt.Println("<< connection closed >>")
@@ -39,6 +39,11 @@ func main() {
 			} else {
 				panic(err)
 			}
+		}
+
+		if strings.Contains(string(response), "goodbye") {
+			fmt.Println("<< connection closed >>")
+			os.Exit(0)
 		}
 
 		fmt.Println("------------------------------")
