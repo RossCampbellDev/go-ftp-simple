@@ -53,6 +53,7 @@ func main() {
 			os.Exit(0)
 		}
 
+		fmt.Printf("%s\n", response)
 		fmt.Println("------------------------------")
 	}
 }
@@ -61,7 +62,8 @@ func connect(ipAddr string, wg *sync.WaitGroup) net.Conn {
 	defer wg.Done()
 	conn, err := net.Dial("tcp", ipAddr)
 	if err != nil {
-		panic(err)
+		fmt.Println("connection refused")
+		os.Exit(0)
 	}
 	fmt.Println("connected to server...")
 	return conn

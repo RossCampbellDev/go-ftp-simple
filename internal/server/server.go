@@ -31,6 +31,8 @@ func (f *FtpServer) Listen(port int) {
 	fmt.Printf("listening on %d...\n", port)
 
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go f.quitter(&wg)
 	for {
 		wg.Add(1)
 		conn, err := ln.Accept()
@@ -42,6 +44,20 @@ func (f *FtpServer) Listen(port int) {
 		go f.parseCommand(conn, &wg, id)
 	}
 	wg.Wait()
+}
+
+func (f *FtpServer) quitter(wg *sync.WaitGroup) {
+	defer wg.Done()
+	var input string
+	for {
+		fmt.Scanln(&input)
+		if input == "quit" {
+			for id, _ := range f.clients {
+				f.sendResponse("goodbye", id)	// TODO: not being listened for at the other end.  client only listens when it's sent a command
+			}
+			os.Exit(0)
+		}
+	}
 }
 
 func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
@@ -127,8 +143,8 @@ func (f *FtpServer) listFiles() string {
 	}
 
 	for _, f := range files {
-		if len(f) > 0 {
-			response += fmt.Sprintf(" - %s\n", f)
+		if len(f.Name()) > 0 {
+			response += fmt.Sprintf("|- %s\n", f.Name())
 		}
 	}
 
