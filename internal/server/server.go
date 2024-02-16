@@ -8,6 +8,9 @@ import (
 	"strings"
 	"sync"
 	"os"
+	"path/filepath"
+	"io"
+	"encoding/binary"
 )
 
 type FtpServer struct {
@@ -66,15 +69,12 @@ func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
 
 	for !sentinel {
 		userInput := make([]byte, 512) // TODO: not likely to break but still bad solution.  refactor.
-		_, err := conn.Read(userInput) // blocks the program but we need waitgroups if more than one connection
+		n, err := conn.Read(userInput) // blocks the program but we need waitgroups if more than one connection
 		if err != nil {
 			panic(err) // replace with channel?
 		}
 
-		// TODO: bad bodge.  refactor.
-		endOfWord := bytes.IndexByte(userInput, 0)
-
-		command := string(userInput[:endOfWord])
+		command, args := splitCommand(userInput, n)
 
 		var response string // TODO: change to use the binary write?  refactor.
 
@@ -84,13 +84,15 @@ func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
 			response = "goodbye"
 			sentinel = true
 		case "DEL":
-			response = f.deleteFile("fname") // TODO: get filename from client
+			response = f.deleteFile(args) // TODO: get filename from client
 		case "GET":
-			response = f.sendFileToClient("test") // TODO: get filename
+			response = f.sendFileToClient(args) // TODO: get filename
 		case "LS":
 			response = f.listFiles()
 		case "PUT":
-			response = f.retrieveFileFromClient("test")
+			wg.Add(1)
+			response = f.retrieveFileFromClient(args, id, wg)
+			wg.Wait()
 		default:
 			fmt.Println("Invalid Command Received")
 			response = "invalid command"
@@ -100,13 +102,20 @@ func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
 	}
 }
 
+func splitCommand(userInput []byte, n int) (string, string) {
+	firstSpace := bytes.IndexByte(userInput, ' ')
+	command := string(userInput[:firstSpace])
+	args := string(userInput[firstSpace+1:n])
+	return command, args
+}
+
 // maybe don't need this but whatever
 func (f *FtpServer) sendResponse(response string, id int) {
 	f.clients[id].Write([]byte(response))
 }
 
 func (f *FtpServer) newClient(conn net.Conn) int {
-	// TODO: could result in over-writing connecting.  refactor.
+	// TODO: could result in over-writing connections.  refactor.
 	id := rand.Intn(10000)
 	f.clients[id] = conn
 	fmt.Printf("...connection accepted from %s\n", f.clients[id].RemoteAddr().String())
@@ -153,23 +162,34 @@ func (f *FtpServer) listFiles() string {
 	return response
 }
 
-func (f *FtpServer) retrieveFileFromClient(filename string) string {
-	fmt.Println("put", filename)
+func (f *FtpServer) retrieveFileFromClient(fileName string, id int, wg *sync.WaitGroup) string {
+	defer wg.Done()
+	readBuffer := new(bytes.Buffer)
+
+	var size int64
+	binary.Read(f.clients[id], binary.LittleEndian, &size)
+	fmt.Println("size", size)
+
+	for {
+		_, err := io.CopyN(readBuffer, f.clients[id], size)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return "error receiving file"
+		}
+	}
+
+	if readBuffer.Len() == 0 {
+		return "failed to receive data"
+	}
+
+	fileName = filepath.Base(fileName)
+
+	err := os.WriteFile(fileName, readBuffer.Bytes(), 0777)	// is 777 a security risk?
+	if err != nil {
+		return "failed to write the file to disk"
+	}
+
 	return "file received"
 }
-
-/* OLD, refactor
-func (f *FtpServer) readFile(fileName string) {
-	readBuffer := new(bytes.Buffer)
-	for {
-		var size int64
-		binary.Read(conn, binary.LittleEndian, &size) // retrieve the size of incoming stream
-
-		_, err := io.CopyN(readBuffer, conn, size)
-		if err != nil {
-			panic(err) // replace with sending error to a channel?
-		}
-
-		fmt.Println("File Received")
-	}
-} */

@@ -1,0 +1,4 @@
+here is some test text
+we are going to see if this file
+can be streamed via tcp
+to our ftp server!

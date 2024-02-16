@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -73,37 +73,40 @@ func getUserInput() string {
 	var userInput string
 	for len(userInput) == 0 {
 		fmt.Printf(" > ")
-		fmt.Scanln(&userInput)
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		userInput = scanner.Text()
 	}
-	return strings.ToUpper(userInput)
+	
+	return userInput
 }
 
 func (conn myConn) parseCommand(command string, wg *sync.WaitGroup) {
-	var fileName string
+	command, args := splitCommand(command)
 
-	switch command {
+	switch strings.ToUpper(command) {
 	case "DEL", "GET", "PUT":
-		if !checkCommand(command) {
+		if !checkCommand(command, args) {
 			fmt.Println("Bad Command!  try <CMD> <filename.ext>")
 			wg.Done()
 			return
-		} else {
-			fileName = strings.Split(command, " ")[0]
 		}
 	}
 
-	switch command {
+	switch strings.ToUpper(command) {
 	case "GET":
-		if checkFileExists(fileName) {
-			conn.sendAndReceive(fileName, wg)
+		if checkFileExists(args) {
+			conn.sendAndReceive(args, wg)
 		} else {
 			fmt.Println("File Not Found!")
 			wg.Done()
 			return
 		}
 	case "PUT":
-		if checkFileExists(fileName) {
-			conn.sendFile(fileName, wg)
+		if checkFileExists(args) {
+			if err := conn.sendFile(args, wg); err != nil {
+				fmt.Println("error sending file", err)
+			}
 		} else {
 			fmt.Println("File Not Found!")
 			wg.Done()
@@ -129,16 +132,17 @@ func (conn myConn) sendCommand(command string, wg *sync.WaitGroup) error {
 func (conn myConn) sendFile(fileName string, wg *sync.WaitGroup) error {
 	defer wg.Done()
 	size := getFileSize(fileName)
-	fileBytes := make([]byte, size)
-	_, err := io.ReadFull(rand.Reader, fileBytes) // reads len(fileBytes) bytes from <io.Reader> into file.
+
+	file, err := os.Open(fileName)
 	if err != nil {
 		return err
 	}
 
-	// tell the server side the size of the file before streaming over
+	fmt.Println("send!!")
 	binary.Write(conn, binary.LittleEndian, int64(size))
+	fmt.Println("size sent")
 
-	n, err := io.CopyN(conn, bytes.NewReader(fileBytes), int64(size)) // copy TO the connection.  convert file to fit the io.Reader interface
+	n, err := io.CopyN(conn, file, int64(size))	// TODO: change to send the file in chunks rather than 1 go.  refactor.
 	if err != nil {
 		return err
 	}
@@ -152,15 +156,25 @@ func (conn myConn) sendAndReceive(fileName string, wg *sync.WaitGroup) error {
 	return nil
 }
 
-func checkCommand(command string) bool {
-	regexPattern := `/^\w*\s\S*\.[a-zA-Z]{3,4}$/gm` // two strings separated by a space, with a file extension
+func checkCommand(command string, args string) bool {
+	regexPattern := `^\w*\s\S*\.[a-zA-Z]{3,4}$` // two strings separated by a space, with a file extension
 	regexer := regexp.MustCompile(regexPattern)
-	return regexer.MatchString(command)
+	return regexer.MatchString(command + " " + args)
+}
+
+func splitCommand(command string) (string, string) {
+	firstSpace := strings.Index(command, " ")
+	args := ""
+	if firstSpace > 0 {
+		args = command[firstSpace+1:]
+	}
+	command = command[:firstSpace]
+	return command, args
 }
 
 func checkFileExists(fileName string) bool {
 	_, err := os.Stat(fileName)
-	return os.IsExist(err)
+	return !os.IsNotExist(err)
 }
 
 func getFileSize(fileName string) int64 {
