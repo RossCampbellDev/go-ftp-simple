@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"os"
 )
 
 type FtpServer struct {
@@ -113,8 +114,27 @@ func (f *FtpServer) sendFileToClient(filename string) string {
 }
 
 func (f *FtpServer) listFiles() string {
-	fmt.Println("list")
-	return "a list of files ere mate"
+	var response string
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "can't find out current directory"
+	}
+	response = fmt.Sprintf("%s\n", cwd)
+
+	files, err := os.ReadDir(cwd)
+	if err != nil {
+		return "can't list files"
+	}
+
+	for _, f := range files {
+		if len(f) > 0 {
+			response += fmt.Sprintf(" - %s\n", f)
+		}
+	}
+
+	fmt.Println(response)
+
+	return response
 }
 
 func (f *FtpServer) retrieveFileFromClient(filename string) string {

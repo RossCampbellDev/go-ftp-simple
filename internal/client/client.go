@@ -90,8 +90,6 @@ func (conn myConn) parseCommand(command string, wg *sync.WaitGroup) {
 		}
 	}
 
-	fmt.Println("filename:", fileName)
-
 	switch command {
 	case "GET":
 		if checkFileExists(fileName) {
