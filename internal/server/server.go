@@ -2,15 +2,15 @@ package server
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
-	"strings"
-	"sync"
 	"os"
 	"path/filepath"
-	"io"
-	"encoding/binary"
+	"strings"
+	"sync"
 )
 
 type FtpServer struct {
@@ -46,7 +46,7 @@ func (f *FtpServer) Listen(port int) {
 		id := f.newClient(conn)
 		go f.parseCommand(conn, &wg, id)
 	}
-	wg.Wait()
+	// wg.Wait()
 }
 
 func (f *FtpServer) quitter(wg *sync.WaitGroup) {
@@ -55,8 +55,8 @@ func (f *FtpServer) quitter(wg *sync.WaitGroup) {
 	for {
 		fmt.Scanln(&input)
 		if input == "quit" {
-			for id, _ := range f.clients {
-				f.sendResponse("goodbye", id)	// TODO: not being listened for at the other end.  client only listens when it's sent a command
+			for id := range f.clients {
+				f.sendResponse("goodbye", id) // TODO: not being listened for at the other end.  client only listens when it's sent a command
 			}
 			os.Exit(0)
 		}
@@ -105,7 +105,7 @@ func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
 func splitCommand(userInput []byte, n int) (string, string) {
 	firstSpace := bytes.IndexByte(userInput, ' ')
 	command := string(userInput[:firstSpace])
-	args := string(userInput[firstSpace+1:n])
+	args := string(userInput[firstSpace+1 : n])
 	return command, args
 }
 
@@ -186,7 +186,7 @@ func (f *FtpServer) retrieveFileFromClient(fileName string, id int, wg *sync.Wai
 
 	fileName = filepath.Base(fileName)
 
-	err := os.WriteFile(fileName, readBuffer.Bytes(), 0777)	// is 777 a security risk?
+	err := os.WriteFile(fileName, readBuffer.Bytes(), 0777) // is 777 a security risk?
 	if err != nil {
 		return "failed to write the file to disk"
 	}
