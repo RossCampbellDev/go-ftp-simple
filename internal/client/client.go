@@ -23,7 +23,7 @@ var (
 
 func main() {
 	var wg sync.WaitGroup
-	// connect to server
+
 	wg.Add(1)
 	myConn := myConn{Conn: connect(server, &wg)}
 	wg.Wait()
@@ -37,9 +37,9 @@ func main() {
 		wg.Wait()
 
 		// TODO: come up with better way of receiving response.
-		// currently, it seems to deadlock if there was a problem with GET (only thing tested)
-		response := make([]byte, 512) // TODO: needs replacing for CopyN etc.  refactor.
-		if _, err := myConn.Read(response); err != nil {
+		response := make([]byte, 512)
+		n, err := myConn.Read(response)
+		if err != nil {
 			if err == io.EOF {
 				fmt.Println("<< connection closed >>")
 				os.Exit(0)
@@ -48,12 +48,9 @@ func main() {
 			}
 		}
 
-		if strings.Contains(string(response), "goodbye") {
-			fmt.Println("<< connection closed >>")
-			os.Exit(0)
-		}
-
-		fmt.Printf("%s\n", response)
+		wg.Add(1)
+		go parseResponse(response, n, &wg)
+		wg.Wait()
 		fmt.Println("------------------------------")
 	}
 }
@@ -77,17 +74,18 @@ func getUserInput() string {
 		scanner.Scan()
 		userInput = scanner.Text()
 	}
-	
+
 	return userInput
 }
 
 func (conn myConn) parseCommand(command string, wg *sync.WaitGroup) {
 	command, args := splitCommand(command)
 
+	// TODO: this could be refactored to use decorators or whatever?  instead of coding each type of cmd here
 	switch strings.ToUpper(command) {
 	case "DEL", "GET", "PUT":
-		if !checkCommand(command, args) {
-			fmt.Println("Bad Command!  try <CMD> <filename.ext>")
+		if !checkCommandFormat(command, args) {
+			fmt.Println("Bad Command!  try <CMD> <filename.ext>") // TODO: it's not returning to the main loop after this
 			wg.Done()
 			return
 		}
@@ -117,6 +115,18 @@ func (conn myConn) parseCommand(command string, wg *sync.WaitGroup) {
 	}
 }
 
+func parseResponse(userInput []byte, n int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	if strings.Contains(string(userInput), "goodbye") {
+		fmt.Println("<< connection closed >>")
+		os.Exit(0)
+	}
+
+	response := string(userInput[:n])
+
+	fmt.Printf(" < %s\n", response)
+}
+
 func (conn myConn) sendCommand(command string, wg *sync.WaitGroup) error {
 	defer wg.Done()
 	commandBytes := []byte(command)
@@ -138,11 +148,10 @@ func (conn myConn) sendFile(fileName string, wg *sync.WaitGroup) error {
 		return err
 	}
 
-	fmt.Println("send!!")
 	binary.Write(conn, binary.LittleEndian, int64(size))
 	fmt.Println("size sent")
 
-	n, err := io.CopyN(conn, file, int64(size))	// TODO: change to send the file in chunks rather than 1 go.  refactor.
+	n, err := io.CopyN(conn, file, int64(size)) // TODO: change to send the file in chunks rather than 1 go.  refactor.
 	if err != nil {
 		return err
 	}
@@ -156,7 +165,7 @@ func (conn myConn) sendAndReceive(fileName string, wg *sync.WaitGroup) error {
 	return nil
 }
 
-func checkCommand(command string, args string) bool {
+func checkCommandFormat(command string, args string) bool {
 	regexPattern := `^\w*\s\S*\.[a-zA-Z]{3,4}$` // two strings separated by a space, with a file extension
 	regexer := regexp.MustCompile(regexPattern)
 	return regexer.MatchString(command + " " + args)
@@ -165,10 +174,12 @@ func checkCommand(command string, args string) bool {
 func splitCommand(command string) (string, string) {
 	firstSpace := strings.Index(command, " ")
 	args := ""
-	if firstSpace > 0 {
-		args = command[firstSpace+1:]
+	if firstSpace > -1 {
+		if firstSpace > 0 {
+			args = command[firstSpace+1:]
+		}
+		command = command[:firstSpace]
 	}
-	command = command[:firstSpace]
 	return command, args
 }
 

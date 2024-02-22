@@ -34,8 +34,9 @@ func (f *FtpServer) Listen(port int) {
 	fmt.Printf("listening on %d...\n", port)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go f.quitter(&wg)
+	// wg.Add(1)
+	// go f.quitter(&wg)	// TODO: not sure how this works in conjunction with the below loop
+
 	for {
 		wg.Add(1)
 		conn, err := ln.Accept()
@@ -68,13 +69,14 @@ func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
 	sentinel := false
 
 	for !sentinel {
-		userInput := make([]byte, 512) // TODO: not likely to break but still bad solution.  refactor.
+		userInput := make([]byte, 512) // TODO: not likely to break but still bad solution.  refactor.  use bufio.Scanner?
 		n, err := conn.Read(userInput) // blocks the program but we need waitgroups if more than one connection
 		if err != nil {
 			panic(err) // replace with channel?
 		}
 
 		command, args := splitCommand(userInput, n)
+		fmt.Printf("command received: %s%s\n", command, args)
 
 		var response string // TODO: change to use the binary write?  refactor.
 
@@ -94,8 +96,8 @@ func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
 			response = f.retrieveFileFromClient(args, id, wg)
 			wg.Wait()
 		default:
-			fmt.Println("Invalid Command Received")
-			response = "invalid command"
+			fmt.Printf("Invalid Command Received: '%s'\n", command)
+			response = fmt.Sprintf("invalid command: '%s'\n", command)
 		}
 
 		f.sendResponse(response, id) // bodge? lets the client know something happened
@@ -104,8 +106,13 @@ func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
 
 func splitCommand(userInput []byte, n int) (string, string) {
 	firstSpace := bytes.IndexByte(userInput, ' ')
-	command := string(userInput[:firstSpace])
-	args := string(userInput[firstSpace+1 : n])
+	command, args := "", ""
+	if firstSpace > -1 {
+		command = string(userInput[:firstSpace])
+		args = string(userInput[firstSpace+1 : n])
+	} else {
+		command = string(userInput[0:n])
+	}
 	return command, args
 }
 
@@ -156,8 +163,6 @@ func (f *FtpServer) listFiles() string {
 			response += fmt.Sprintf("|- %s\n", f.Name())
 		}
 	}
-
-	fmt.Println(response)
 
 	return response
 }
