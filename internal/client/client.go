@@ -30,10 +30,10 @@ func main() {
 	defer myConn.Close()
 
 	for {
-		cmd := getUserInput()
+		cmd, args := getUserInput()
 
 		wg.Add(1)
-		go myConn.parseCommand(cmd, &wg)
+		go myConn.runCommand(cmd, args, &wg)
 		wg.Wait()
 
 		// TODO: come up with better way of receiving response.
@@ -66,31 +66,30 @@ func connect(ipAddr string, wg *sync.WaitGroup) net.Conn {
 	return conn
 }
 
-func getUserInput() string {
-	var userInput string
+func getUserInput() (string, string) {
+	var userInput, command, args string
+
 	for len(userInput) == 0 {
 		fmt.Printf(" > ")
 		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Scan()
 		userInput = scanner.Text()
-	}
 
-	return userInput
-}
-
-func (conn myConn) parseCommand(command string, wg *sync.WaitGroup) {
-	command, args := splitCommand(command)
-
-	// TODO: this could be refactored to use decorators or whatever?  instead of coding each type of cmd here
-	switch strings.ToUpper(command) {
-	case "DEL", "GET", "PUT":
-		if !checkCommandFormat(command, args) {
-			fmt.Println("Bad Command!  try <CMD> <filename.ext>") // TODO: it's not returning to the main loop after this
-			wg.Done()
-			return
+		command, args = splitCommand(userInput)
+		switch strings.ToUpper(command) {
+		case "DEL", "GET", "PUT":
+			if !checkCommandFormat(command, args) {
+				fmt.Println("Bad Command!  try <CMD> <filename.ext>")
+				userInput = ""
+			}
 		}
 	}
 
+	return command, args
+}
+
+// TODO: this could be refactored to use decorators or whatever?  instead of coding each type of cmd here
+func (conn myConn) runCommand(command string, args string, wg *sync.WaitGroup) {
 	switch strings.ToUpper(command) {
 	case "GET":
 		if checkFileExists(args) {
@@ -102,6 +101,8 @@ func (conn myConn) parseCommand(command string, wg *sync.WaitGroup) {
 		}
 	case "PUT":
 		if checkFileExists(args) {
+			wg.Add(1)
+			conn.sendCommand(command+" "+args, wg)
 			if err := conn.sendFile(args, wg); err != nil {
 				fmt.Println("error sending file", err)
 			}
@@ -149,9 +150,8 @@ func (conn myConn) sendFile(fileName string, wg *sync.WaitGroup) error {
 	}
 
 	binary.Write(conn, binary.LittleEndian, int64(size))
-	fmt.Println("size sent")
 
-	n, err := io.CopyN(conn, file, int64(size)) // TODO: change to send the file in chunks rather than 1 go.  refactor.
+	n, err := io.CopyN(conn, file, int64(size)) // TODO: change to send the file in chunks rather than 1 go?  refactor.
 	if err != nil {
 		return err
 	}

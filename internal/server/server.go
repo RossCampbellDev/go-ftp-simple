@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net"
 	"os"
@@ -29,25 +30,25 @@ func (f *FtpServer) Listen(port int) {
 
 	ln, err := net.Listen("tcp", f.portString)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	fmt.Printf("listening on %d...\n", port)
 
 	var wg sync.WaitGroup
-	// wg.Add(1)
-	// go f.quitter(&wg)	// TODO: not sure how this works in conjunction with the below loop
+	wg.Add(1)
+	go f.quitter(&wg) // TODO: not sure how this works in conjunction with the below loop
 
 	for {
 		wg.Add(1)
 		conn, err := ln.Accept()
 		if err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 
 		id := f.newClient(conn)
-		go f.parseCommand(conn, &wg, id)
+		go f.parseCommand(&wg, id)
 	}
-	// wg.Wait()
+	wg.Wait()
 }
 
 func (f *FtpServer) quitter(wg *sync.WaitGroup) {
@@ -64,19 +65,19 @@ func (f *FtpServer) quitter(wg *sync.WaitGroup) {
 	}
 }
 
-func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
+func (f *FtpServer) parseCommand(wg *sync.WaitGroup, id int) {
 	defer wg.Done()
 	sentinel := false
 
 	for !sentinel {
-		userInput := make([]byte, 512) // TODO: not likely to break but still bad solution.  refactor.  use bufio.Scanner?
-		n, err := conn.Read(userInput) // blocks the program but we need waitgroups if more than one connection
+		userInput := make([]byte, 512)          // TODO: not likely to break but still bad solution.  refactor.  use bufio.Scanner?
+		n, err := f.clients[id].Read(userInput) // blocks the program but we need waitgroups if more than one connection
 		if err != nil {
-			panic(err) // replace with channel?
+			log.Fatal(err) // replace with channel?
 		}
 
 		command, args := splitCommand(userInput, n)
-		fmt.Printf("command received: %s%s\n", command, args)
+		// fmt.Printf("command received:\t%s%s (%d bytes)\t[%s]\n", command, args, n, f.clients[id].RemoteAddr().String())
 
 		var response string // TODO: change to use the binary write?  refactor.
 
@@ -88,13 +89,13 @@ func (f *FtpServer) parseCommand(conn net.Conn, wg *sync.WaitGroup, id int) {
 		case "DEL":
 			response = f.deleteFile(args) // TODO: get filename from client
 		case "GET":
-			response = f.sendFileToClient(args) // TODO: get filename
+			response = f.sendFileToClient(args, id) // TODO: get filename
 		case "LS":
 			response = f.listFiles()
 		case "PUT":
 			wg.Add(1)
 			response = f.retrieveFileFromClient(args, id, wg)
-			wg.Wait()
+			// wg.Wait()
 		default:
 			fmt.Printf("Invalid Command Received: '%s'\n", command)
 			response = fmt.Sprintf("invalid command: '%s'\n", command)
@@ -140,7 +141,7 @@ func (f *FtpServer) deleteFile(filename string) string {
 	return "deleted"
 }
 
-func (f *FtpServer) sendFileToClient(filename string) string {
+func (f *FtpServer) sendFileToClient(filename string, id int) string {
 	fmt.Println("get", filename)
 	return "file sent"
 }
@@ -173,15 +174,17 @@ func (f *FtpServer) retrieveFileFromClient(fileName string, id int, wg *sync.Wai
 
 	var size int64
 	binary.Read(f.clients[id], binary.LittleEndian, &size)
-	fmt.Println("size", size)
 
 	for {
-		_, err := io.CopyN(readBuffer, f.clients[id], size)
+		n, err := io.CopyN(readBuffer, f.clients[id], size)
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
 			return "error receiving file"
+		}
+		if n >= size {
+			break
 		}
 	}
 
@@ -193,8 +196,9 @@ func (f *FtpServer) retrieveFileFromClient(fileName string, id int, wg *sync.Wai
 
 	err := os.WriteFile(fileName, readBuffer.Bytes(), 0777) // is 777 a security risk?
 	if err != nil {
+		log.Fatal(err)
 		return "failed to write the file to disk"
 	}
 
-	return "file received"
+	return "file uploaded successfully!"
 }
