@@ -15,20 +15,22 @@ import (
 )
 
 type FtpServer struct {
-	port       int
-	portString string
-	clients    map[int]net.Conn
+	Port       int
+	PortString string
+	Clients    map[int]net.Conn
 }
 
 func NewFtpServer() *FtpServer {
-	return &FtpServer{clients: make(map[int]net.Conn)}
+	return &FtpServer{
+		Clients: make(map[int]net.Conn),
+	}
 }
 
 func (f *FtpServer) Listen(port int) {
-	f.port = port
-	f.portString = fmt.Sprintf(":%d", port)
+	f.Port = port
+	f.PortString = fmt.Sprintf(":%d", port)
 
-	ln, err := net.Listen("tcp", f.portString)
+	ln, err := net.Listen("tcp", f.PortString)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -51,33 +53,18 @@ func (f *FtpServer) Listen(port int) {
 	wg.Wait()
 }
 
-func (f *FtpServer) quitter(wg *sync.WaitGroup) {
-	defer wg.Done()
-	var input string
-	for {
-		fmt.Scanln(&input)
-		if input == "quit" {
-			for id := range f.clients {
-				f.sendResponse("goodbye", id) // TODO: not being listened for at the other end.  client only listens when it's sent a command
-			}
-			os.Exit(0)
-		}
-	}
-}
-
 func (f *FtpServer) parseCommand(wg *sync.WaitGroup, id int) {
 	defer wg.Done()
 	sentinel := false
 
 	for !sentinel {
 		userInput := make([]byte, 512)          // TODO: not likely to break but still bad solution.  refactor.  use bufio.Scanner?
-		n, err := f.clients[id].Read(userInput) // blocks the program but we need waitgroups if more than one connection
+		n, err := f.Clients[id].Read(userInput) // blocks the program but we need waitgroups if more than one connection
 		if err != nil {
 			log.Fatal(err) // replace with channel?
 		}
 
 		command, args := splitCommand(userInput, n)
-		// fmt.Printf("command received:\t%s%s (%d bytes)\t[%s]\n", command, args, n, f.clients[id].RemoteAddr().String())
 
 		var response string // TODO: change to use the binary write?  refactor.
 
@@ -86,16 +73,15 @@ func (f *FtpServer) parseCommand(wg *sync.WaitGroup, id int) {
 			defer f.exitClient(id)
 			response = "goodbye"
 			sentinel = true
-		case "DEL":
-			response = f.deleteFile(args) // TODO: get filename from client
+		case "DEL": // TODO: hanging after successfully deleting the file
+			response = f.deleteFile(args)
 		case "GET":
-			response = f.sendFileToClient(args, id) // TODO: get filename
+			response = f.sendFileToClient(args, id)
 		case "LS":
 			response = f.listFiles()
 		case "PUT":
 			wg.Add(1)
 			response = f.retrieveFileFromClient(args, id, wg)
-			// wg.Wait()
 		default:
 			fmt.Printf("Invalid Command Received: '%s'\n", command)
 			response = fmt.Sprintf("invalid command: '%s'\n", command)
@@ -106,8 +92,12 @@ func (f *FtpServer) parseCommand(wg *sync.WaitGroup, id int) {
 }
 
 func splitCommand(userInput []byte, n int) (string, string) {
-	firstSpace := bytes.IndexByte(userInput, ' ')
-	command, args := "", ""
+	var (
+		firstSpace = bytes.IndexByte(userInput, ' ')
+		command    = ""
+		args       = ""
+	)
+
 	if firstSpace > -1 {
 		command = string(userInput[:firstSpace])
 		args = string(userInput[firstSpace+1 : n])
@@ -119,30 +109,23 @@ func splitCommand(userInput []byte, n int) (string, string) {
 
 // maybe don't need this but whatever
 func (f *FtpServer) sendResponse(response string, id int) {
-	f.clients[id].Write([]byte(response))
+	f.Clients[id].Write([]byte(response))
 }
 
-func (f *FtpServer) newClient(conn net.Conn) int {
-	// TODO: could result in over-writing connections.  refactor.
-	id := rand.Intn(10000)
-	f.clients[id] = conn
-	fmt.Printf("...connection accepted from %s\n", f.clients[id].RemoteAddr().String())
-	return id
+func (f *FtpServer) deleteFile(fileName string) string {
+	err := os.Remove(fileName)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "File doesn't exist anyway!"
+		}
+		return fmt.Sprintf("There was a problem deleting %s", fileName)
+	}
+
+	return fmt.Sprintf("%s Deleted", fileName)
 }
 
-func (f *FtpServer) exitClient(id int) {
-	fmt.Printf("client disconnected: %s\n", f.clients[id].RemoteAddr().String())
-	f.clients[id].Close()
-	delete(f.clients, id)
-}
-
-func (f *FtpServer) deleteFile(filename string) string {
-	fmt.Println("delete", filename)
-	return "deleted"
-}
-
-func (f *FtpServer) sendFileToClient(filename string, id int) string {
-	fmt.Println("get", filename)
+func (f *FtpServer) sendFileToClient(fileName string, id int) string {
+	fmt.Println("get", fileName)
 	return "file sent"
 }
 
@@ -170,13 +153,14 @@ func (f *FtpServer) listFiles() string {
 
 func (f *FtpServer) retrieveFileFromClient(fileName string, id int, wg *sync.WaitGroup) string {
 	defer wg.Done()
-	readBuffer := new(bytes.Buffer)
-
-	var size int64
-	binary.Read(f.clients[id], binary.LittleEndian, &size)
+	var (
+		readBuffer = new(bytes.Buffer)
+		size       int64
+	)
+	binary.Read(f.Clients[id], binary.LittleEndian, &size)
 
 	for {
-		n, err := io.CopyN(readBuffer, f.clients[id], size)
+		n, err := io.CopyN(readBuffer, f.Clients[id], size)
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -201,4 +185,32 @@ func (f *FtpServer) retrieveFileFromClient(fileName string, id int, wg *sync.Wai
 	}
 
 	return "file uploaded successfully!"
+}
+
+func (f *FtpServer) quitter(wg *sync.WaitGroup) {
+	defer wg.Done()
+	var input string
+	for {
+		fmt.Scanln(&input)
+		if input == "quit" {
+			for id := range f.Clients {
+				f.sendResponse("goodbye", id) // TODO: not being listened for at the other end.  client only listens when it's sent a command
+			}
+			os.Exit(0)
+		}
+	}
+}
+
+func (f *FtpServer) newClient(conn net.Conn) int {
+	// TODO: could result in over-writing connections.  refactor.
+	id := rand.Intn(10000)
+	f.Clients[id] = conn
+	fmt.Printf("...connection accepted from %s\n", f.Clients[id].RemoteAddr().String())
+	return id
+}
+
+func (f *FtpServer) exitClient(id int) {
+	fmt.Printf("client disconnected: %s\n", f.Clients[id].RemoteAddr().String())
+	f.Clients[id].Close()
+	delete(f.Clients, id)
 }

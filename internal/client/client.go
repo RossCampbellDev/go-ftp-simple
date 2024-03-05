@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"regexp"
@@ -22,10 +23,12 @@ var (
 )
 
 func main() {
-	var wg sync.WaitGroup
+	var (
+		wg     sync.WaitGroup
+		myConn = myConn{Conn: connect(server, &wg)}
+	)
 
 	wg.Add(1)
-	myConn := myConn{Conn: connect(server, &wg)}
 	wg.Wait()
 	defer myConn.Close()
 
@@ -67,7 +70,11 @@ func connect(ipAddr string, wg *sync.WaitGroup) net.Conn {
 }
 
 func getUserInput() (string, string) {
-	var userInput, command, args string
+	var (
+		userInput string
+		command   string
+		args      string
+	)
 
 	for len(userInput) == 0 {
 		fmt.Printf(" > ")
@@ -111,6 +118,9 @@ func (conn myConn) runCommand(command string, args string, wg *sync.WaitGroup) {
 			wg.Done()
 			return
 		}
+	case "DEL":
+		wg.Add(1)
+		conn.sendCommand(command+" "+args, wg)
 	default:
 		conn.sendCommand(command, wg)
 	}
@@ -134,6 +144,7 @@ func (conn myConn) sendCommand(command string, wg *sync.WaitGroup) error {
 
 	_, err := io.Copy(conn, bytes.NewReader(commandBytes))
 	if err != nil {
+		log.Fatal(err)
 		return err
 	}
 
@@ -146,6 +157,7 @@ func (conn myConn) sendFile(fileName string, wg *sync.WaitGroup) error {
 
 	file, err := os.Open(fileName)
 	if err != nil {
+		log.Fatal(err)
 		return err
 	}
 
